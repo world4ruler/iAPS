@@ -74,6 +74,14 @@ extension Home {
         @Published var overrides: [Override] = []
         @Published var alwaysUseColors: Bool = true
         @Published var timeSettings: Bool = true
+        @Published var useCalc: Bool = true
+        @Published var minimumSMB: Decimal = 0.3
+        @Published var maxBolus: Decimal = 0
+        @Published var maxBolusValue: Decimal = 1
+        @Published var useInsulinBars: Bool = false
+        @Published var iobData: [IOBData] = []
+        @Published var neg: Int = 0
+        @Published var tddChange: Decimal = 0
 
         let coredataContext = CoreDataStack.shared.persistentContainer.viewContext
 
@@ -92,7 +100,9 @@ extension Home {
             setupCurrentPumpTimezone()
             setupOverrideHistory()
             setupLoopStats()
+            setupData()
 
+            // iobData = provider.reasons()
             suggestion = provider.suggestion
             overrideHistory = provider.overrideHistory()
             uploadStats = settingsManager.settings.uploadStats
@@ -118,6 +128,10 @@ extension Home {
             hours = settingsManager.settings.hours
             alwaysUseColors = settingsManager.settings.alwaysUseColors
             timeSettings = settingsManager.settings.timeSettings
+            useCalc = settingsManager.settings.useCalc
+            minimumSMB = settingsManager.settings.minimumSMB
+            maxBolus = settingsManager.pumpSettings.maxBolus
+            useInsulinBars = settingsManager.settings.useInsulinBars
 
             broadcaster.register(GlucoseObserver.self, observer: self)
             broadcaster.register(SuggestionObserver.self, observer: self)
@@ -325,6 +339,7 @@ extension Home {
                 self.boluses = self.provider.pumpHistory(hours: self.filteredHours).filter {
                     $0.type == .bolus
                 }
+                self.maxBolusValue = self.boluses.compactMap(\.amount).max() ?? 1
             }
         }
 
@@ -461,6 +476,24 @@ extension Home {
             }
         }
 
+        private func setupData() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                if let data = self.provider.reasons() {
+                    self.iobData = data
+                    neg = data.filter({ $0.iob < 0 }).count * 5
+                    let tdds = CoreDataStorage().fetchTDD(interval: DateFilter().twoDays)
+                    let yesterday = (tdds.first(where: {
+                        ($0.timestamp ?? .distantFuture) <= Date().addingTimeInterval(-24.hours.timeInterval)
+                    })?.tdd ?? 0) as Decimal
+                    tddChange = ((tdds.first?.tdd ?? 0) as Decimal) - yesterday
+
+                    print("Yesterday: \(yesterday)")
+                    print("Today: \((tdds.first?.tdd ?? 0) as Decimal)")
+                }
+            }
+        }
+
         func openCGM() {
             guard var url = nightscoutManager.cgmURL else { return }
 
@@ -512,6 +545,7 @@ extension Home.StateModel:
         setStatusTitle()
         setupOverrideHistory()
         setupLoopStats()
+        setupData()
     }
 
     func settingsDidChange(_ settings: FreeAPSSettings) {
@@ -532,8 +566,13 @@ extension Home.StateModel:
         hours = settingsManager.settings.hours
         alwaysUseColors = settingsManager.settings.alwaysUseColors
         timeSettings = settingsManager.settings.timeSettings
+        useCalc = settingsManager.settings.useCalc
+        minimumSMB = settingsManager.settings.minimumSMB
+        maxBolus = settingsManager.pumpSettings.maxBolus
+        useInsulinBars = settingsManager.settings.useInsulinBars
         setupGlucose()
         setupOverrideHistory()
+        setupData()
     }
 
     func pumpHistoryDidUpdate(_: [PumpHistoryEvent]) {
@@ -565,6 +604,7 @@ extension Home.StateModel:
         setStatusTitle()
         setupOverrideHistory()
         setupLoopStats()
+        setupData()
     }
 
     func pumpBatteryDidChange(_: Battery) {
